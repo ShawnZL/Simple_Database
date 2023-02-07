@@ -599,55 +599,55 @@ void internal_node_insert(Table* table, uint32_t parent_page_num, uint32_t child
 // 节点的分裂与插入
 void leaf_node_split_and_insert(Cursor* cursor, uint32_t key, Row* value) {
     /*
-     * Create a new node and move half the cells over.
-     * Insert the new value in one of the two nodes.
-     * Update parent or create a new parent.
-     * */
+    Create a new node and move half the cells over.
+    Insert the new value in one of the two nodes.
+    Update parent or create a new parent.
+    */
+
     void* old_node = get_page(cursor->table->pager, cursor->page_num);
-    uint32_t old_max = get_node_max_key(old_node);// 获取最大值
-    uint32_t new_page_num = get_unused_page_num(cursor->table->pager); // new page
+    uint32_t old_max = get_node_max_key(old_node); // 获取最大值
+    uint32_t new_page_num = get_unused_page_num(cursor->table->pager);
     void* new_node = get_page(cursor->table->pager, new_page_num);
     initialize_leaf_node(new_node);
     *node_parent(new_node) = *node_parent(old_node);
     *leaf_node_next_leaf(new_node) = *leaf_node_next_leaf(old_node);
     *leaf_node_next_leaf(old_node) = new_page_num; // old节点保持在new_page_num位置当中
+
     /*
-     * All existing keys plus new key should be divided
-     * evenly between old (left) and new (right) nodes.
-     * Starting from the right, move each key to correct position.
-     */
-    for (uint32_t i = LEAF_NODE_MAX_CELLS; i >= 0; i--) {
+    All existing keys plus new key should should be divided
+    evenly between old (left) and new (right) nodes.
+    Starting from the right, move each key to correct position.
+    */
+    for (int32_t i = LEAF_NODE_MAX_CELLS; i >= 0; i--) {
+        // 非常重要的地方，之前设置的是uint32_t，是错误的
         void* destination_node;
         // 确定节点的在左孩子还是右孩子
-        if (i >= LEAF_NODE_LEFT_SPLIT_COUNT) { //大于左边计数
+        if (i >= LEAF_NODE_LEFT_SPLIT_COUNT) {//大于左边计数
             destination_node = new_node;
-        }
-        else {
+        } else {
             destination_node = old_node;
         }
         uint32_t index_within_node = i % LEAF_NODE_LEFT_SPLIT_COUNT;
         void* destination = leaf_node_cell(destination_node, index_within_node);
+
         if (i == cursor->cell_num) { // 分离的目标节点
-            //serialize_row(value, destination);
             serialize_row(value,
                           leaf_node_value(destination_node, index_within_node));
             *leaf_node_key(destination_node, index_within_node) = key;
-        }
-        else if (i > cursor->cell_num) {// 因为已经分离出去，所以大于的要缩进
+        } else if (i > cursor->cell_num) { // 因为已经分离出去，所以大于的要缩进
             memcpy(destination, leaf_node_cell(old_node, i - 1), LEAF_NODE_CELL_SIZE);
-        }
-        else {
+        } else {
             memcpy(destination, leaf_node_cell(old_node, i), LEAF_NODE_CELL_SIZE);
         }
     }
+
     /* Update cell count on both leaf nodes */
     *(leaf_node_num_cells(old_node)) = LEAF_NODE_LEFT_SPLIT_COUNT;
     *(leaf_node_num_cells(new_node)) = LEAF_NODE_RIGHT_SPLIT_COUNT;
-    /* update parent*/
+
     if (is_node_root(old_node)) {
         return create_new_root(cursor->table, new_page_num);
-    }
-    else {
+    } else {
         uint32_t parent_page_num = *node_parent(old_node);
         uint32_t new_max = get_node_max_key(old_node);
         void* parent = get_page(cursor->table->pager, parent_page_num);
