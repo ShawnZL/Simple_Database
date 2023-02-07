@@ -1,3 +1,3 @@
-/Users/shawnzhao/Code/Simple_Database/Day1/cmake-build-debug/CMakeFiles/rebuild_cache.dir
-/Users/shawnzhao/Code/Simple_Database/Day1/cmake-build-debug/CMakeFiles/edit_cache.dir
-/Users/shawnzhao/Code/Simple_Database/Day1/cmake-build-debug/CMakeFiles/Day1.dir
+/Users/shawnzhao/Code/Simple_Database/Simple_Database/cmake-build-debug/CMakeFiles/rebuild_cache.dir
+/Users/shawnzhao/Code/Simple_Database/Simple_Database/cmake-build-debug/CMakeFiles/edit_cache.dir
+/Users/shawnzhao/Code/Simple_Database/Simple_Database/cmake-build-debug/CMakeFiles/Simple_Database.dir

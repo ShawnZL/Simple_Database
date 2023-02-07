@@ -55,7 +55,7 @@
 				}
 			],
 			"type" : "INTERNAL",
-			"value" : "/Users/shawnzhao/Code/Simple_Database/Day1/cmake-build-debug"
+			"value" : "/Users/shawnzhao/Code/Simple_Database/Simple_Database/cmake-build-debug"
 		},
 		{
 			"name" : "CMAKE_CACHE_MAJOR_VERSION",
@@ -419,7 +419,7 @@
 				}
 			],
 			"type" : "INTERNAL",
-			"value" : "/Users/shawnzhao/Code/Simple_Database/Day1"
+			"value" : "/Users/shawnzhao/Code/Simple_Database/Simple_Database"
 		},
 		{
 			"name" : "CMAKE_INSTALL_NAME_TOOL",
@@ -699,7 +699,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "Day1"
+			"value" : "Simple_Database"
 		},
 		{
 			"name" : "CMAKE_RANLIB",
@@ -991,7 +991,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "/Users/shawnzhao/Code/Simple_Database/Day1/cmake-build-debug"
+			"value" : "/Users/shawnzhao/Code/Simple_Database/Simple_Database/cmake-build-debug"
 		},
 		{
 			"name" : "Day1_IS_TOP_LEVEL",
@@ -1015,7 +1015,43 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "/Users/shawnzhao/Code/Simple_Database/Day1"
+			"value" : "/Users/shawnzhao/Code/Simple_Database/Simple_Database"
+		},
+		{
+			"name" : "Simple_Database_BINARY_DIR",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Value Computed by CMake"
+				}
+			],
+			"type" : "STATIC",
+			"value" : "/Users/shawnzhao/Code/Simple_Database/Simple_Database/cmake-build-debug"
+		},
+		{
+			"name" : "Simple_Database_IS_TOP_LEVEL",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Value Computed by CMake"
+				}
+			],
+			"type" : "STATIC",
+			"value" : "ON"
+		},
+		{
+			"name" : "Simple_Database_SOURCE_DIR",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Value Computed by CMake"
+				}
+			],
+			"type" : "STATIC",
+			"value" : "/Users/shawnzhao/Code/Simple_Database/Simple_Database"
 		}
 	],
 	"kind" : "cache",

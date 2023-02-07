@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
-project(Day1 C)
+project(Simple_Database C)
 
 set(CMAKE_C_STANDARD 17)
 
-add_executable(Day1 main.c)
+add_executable(Simple_Database main.c)

@@ -2,7 +2,7 @@
 	"artifacts" : 
 	[
 		{
-			"path" : "Day1"
+			"path" : "Simple_Database"
 		}
 	],
 	"backtrace" : 1,
@@ -56,7 +56,7 @@
 			]
 		}
 	],
-	"id" : "Day1::@6890427a1f51a3e7e1df",
+	"id" : "Simple_Database::@6890427a1f51a3e7e1df",
 	"link" : 
 	{
 		"commandFragments" : 
@@ -72,8 +72,8 @@
 		],
 		"language" : "C"
 	},
-	"name" : "Day1",
-	"nameOnDisk" : "Day1",
+	"name" : "Simple_Database",
+	"nameOnDisk" : "Simple_Database",
 	"paths" : 
 	{
 		"build" : ".",

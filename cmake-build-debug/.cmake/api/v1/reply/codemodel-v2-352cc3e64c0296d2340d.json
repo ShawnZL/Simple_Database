@@ -27,7 +27,7 @@
 					[
 						0
 					],
-					"name" : "Day1",
+					"name" : "Simple_Database",
 					"targetIndexes" : 
 					[
 						0
@@ -38,9 +38,9 @@
 			[
 				{
 					"directoryIndex" : 0,
-					"id" : "Day1::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-Day1-Debug-a9b07b8af50e4707d6e7.json",
-					"name" : "Day1",
+					"id" : "Simple_Database::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-Simple_Database-Debug-4cb81c5052ed550a69c7.json",
+					"name" : "Simple_Database",
 					"projectIndex" : 0
 				}
 			]
@@ -49,8 +49,8 @@
 	"kind" : "codemodel",
 	"paths" : 
 	{
-		"build" : "/Users/shawnzhao/Code/Simple_Database/Day1/cmake-build-debug",
-		"source" : "/Users/shawnzhao/Code/Simple_Database/Day1"
+		"build" : "/Users/shawnzhao/Code/Simple_Database/Simple_Database/cmake-build-debug",
+		"source" : "/Users/shawnzhao/Code/Simple_Database/Simple_Database"
 	},
 	"version" : 
 	{
