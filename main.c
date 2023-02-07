@@ -7,31 +7,6 @@
 #include <errno.h>
 #include <fcntl.h>
 // build a sample REPL(read–execute–print loop)
-#define COLUMN_USERNAME_SIZE 32
-#define COLUMN_EMAIL_SIZE 255
-#define size_of_attribute(Struct, Attribute) sizeof(((Struct*)0)->Attribute)
-#define TABLE_MAX_PAGES 100
-
-// 也表示node
-typedef struct {
-    int file_descripter;
-    uint32_t file_length;
-    uint32_t num_pages; // 每一个节点对应的页书
-    void* pages[TABLE_MAX_PAGES];
-}Pager;
-
-// 指向页的数组指针
-typedef struct {
-    uint32_t root_page_num; // B树父节点的对于的page数量
-    Pager* pager;
-} Table;
-
-// Row 代表一行数据，需要我们进行存储的数据
-typedef struct {
-    uint32_t  id;
-    char username[COLUMN_USERNAME_SIZE + 1]; // string 以空字符结尾，所以需要加上这个！
-    char email[COLUMN_EMAIL_SIZE + 1];
-}Row;
 
 typedef struct {
     char* buffer;
@@ -39,17 +14,11 @@ typedef struct {
     ssize_t input_length; // 数据类型用来表示可以被执行读写操作的数据块的大小, signed
 } InputBuffer;
 
-typedef struct {
-    Table* table;
-    uint32_t page_num; // 页码
-    uint32_t cell_num; // key/value 对
-    bool end_of_table; // Indicates a position one past the last element
-}Cursor;
-//the row is the way we can identify a location.
-
 typedef enum {
-    NODE_INTERNAL, NODE_LEAF
-}NodeType;
+    EXECUTE_SUCCESS,
+    EXECUTE_TABLE_FULL,
+    EXECUTE_DUPLICATE_KEY
+} ExecuteResult;
 
 typedef enum {
     META_COMMAND_SUCCESS,
@@ -65,20 +34,25 @@ typedef enum {
 } PrepareResult;
 
 typedef enum {
-    EXECUTE_SUCCESS,
-    EXECUTE_TABLE_FULL,
-    EXECUTE_DUPLICATE_KEY
-} ExecuteResult;
-
-typedef enum {
     STATEMENT_INSERT,
     STATEMENT_SELECT
 } StatementType;
+
+#define COLUMN_USERNAME_SIZE 32
+#define COLUMN_EMAIL_SIZE 255
+// Row 代表一行数据，需要我们进行存储的数据
+typedef struct {
+    uint32_t  id;
+    char username[COLUMN_USERNAME_SIZE + 1]; // string 以空字符结尾，所以需要加上这个！
+    char email[COLUMN_EMAIL_SIZE + 1];
+}Row;
 
 typedef struct {
     StatementType type;
     Row row_to_insert; // only used by insert statement
 } Statement;
+
+#define size_of_attribute(Struct, Attribute) sizeof(((Struct*)0)->Attribute)
 
 const uint32_t ID_SIZE = size_of_attribute(Row, id);
 const uint32_t USERNAME_SIZE = size_of_attribute(Row, username);
@@ -88,7 +62,40 @@ const uint32_t USERNAME_OFFSET = ID_OFFSET + ID_SIZE;
 const uint32_t EMAIL_OFFSET = USERNAME_OFFSET + USERNAME_SIZE;
 const uint32_t ROW_SIZE = ID_SIZE + USERNAME_SIZE + EMAIL_SIZE;
 const uint32_t PAGE_SIZE = 4096;
+const uint32_t INTERNAL_NODE_MAX_CELLS = 3;
 
+#define TABLE_MAX_PAGES 100
+
+// 也表示node
+typedef struct {
+    int file_descripter;
+    uint32_t file_length; // 全部文件长度
+    uint32_t num_pages; // 当前Pager对应的pages里页面的数量
+    void* pages[TABLE_MAX_PAGES]; // 指向各个page的指针数组
+}Pager;
+
+// 指向页的数组指针
+typedef struct {
+    uint32_t root_page_num; // root节点所在位置
+    // which page store the content
+    Pager* pager;
+} Table;
+
+
+typedef struct {
+    Table* table;
+    uint32_t page_num; // 页码
+    uint32_t cell_num; // key/value 对
+    bool end_of_table; // Indicates a position one past the last element
+}Cursor;
+
+void print_row(Row* row) {
+    printf("(%d, %s, %s)\n", row->id, row->username, row->email);
+}
+
+typedef enum {
+    NODE_INTERNAL, NODE_LEAF
+}NodeType;
 
 /*
 + * Common Node Header Layout
@@ -102,11 +109,36 @@ const uint32_t PARENT_POINTER_OFFSET = IS_ROOT_OFFSET + IS_ROOT_SIZE;
 const uint8_t COMMON_NODE_HEADER_SIZE = NODE_TYPE_SIZE + IS_ROOT_SIZE + PARENT_POINTER_SIZE;
 
 /*
++ * Internal Node Header Layout
++ */
+const uint32_t INTERNAL_NODE_NUM_KEYS_SIZE = sizeof(uint32_t);
+const uint32_t INTERNAL_NODE_NUM_KEYS_OFFSET = COMMON_NODE_HEADER_SIZE;
+const uint32_t INTERNAL_NODE_RIGHT_CHILD_SIZE = sizeof(uint32_t);
+const uint32_t INTERNAL_NODE_RIGHT_CHILD_OFFSET =
+        INTERNAL_NODE_NUM_KEYS_OFFSET + INTERNAL_NODE_NUM_KEYS_SIZE;
+const uint32_t INTERNAL_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE +
+                                           INTERNAL_NODE_NUM_KEYS_SIZE + INTERNAL_NODE_RIGHT_CHILD_SIZE;
+
+/*
++ * Internal Node Body Layout
++ */
+const uint32_t INTERNAL_NODE_KEY_SIZE = sizeof(uint32_t);
+const uint32_t INTERNAL_NODE_CHILD_SIZE = sizeof(uint32_t);
+const uint32_t INTERNAL_NODE_CELL_SIZE =
+        INTERNAL_NODE_CHILD_SIZE + INTERNAL_NODE_KEY_SIZE;
+
+
+/*
  * Leaf Node Header Layout
  */
 const uint32_t LEAF_NODE_NUM_CELLS_SIZE = sizeof(uint32_t);
 const uint32_t LEAF_NODE_NUM_CELLS_OFFSET = COMMON_NODE_HEADER_SIZE;
-const uint32_t LEAF_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE + LEAF_NODE_NUM_CELLS_SIZE;
+const uint32_t LEAF_NODE_NEXT_LEAF_SIZE = sizeof(uint32_t);
+const uint32_t LEAF_NODE_NEXT_LEAF_OFFSET =
+        LEAF_NODE_NUM_CELLS_OFFSET + LEAF_NODE_NUM_CELLS_SIZE;
+const uint32_t LEAF_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE +
+        LEAF_NODE_NUM_CELLS_SIZE + LEAF_NODE_NEXT_LEAF_SIZE;
+
 
 /*
 + * Leaf Node Body Layout
@@ -122,24 +154,18 @@ const uint32_t LEAF_NODE_MAX_CELLS = LEAF_NODE_SPACE_FOR_CELLS / LEAF_NODE_CELL_
 const uint32_t LEAF_NODE_RIGHT_SPLIT_COUNT = (LEAF_NODE_MAX_CELLS + 1) / 2;
 const uint32_t LEAF_NODE_LEFT_SPLIT_COUNT = (LEAF_NODE_MAX_CELLS + 1) - LEAF_NODE_RIGHT_SPLIT_COUNT;
 
-/*
-+ * Internal Node Header Layout
-+ */
-const uint32_t INTERNAL_NODE_NUM_KEYS_SIZE = sizeof(uint32_t);
-const uint32_t INTERNAL_NODE_NUM_KEYS_OFFSET = COMMON_NODE_HEADER_SIZE;
-const uint32_t INTERNAL_NODE_RIGHT_CHILD_SIZE = sizeof(uint32_t);
-const uint32_t INTERNAL_NODE_RIGHT_CHILD_OFFSET =
-        INTERNAL_NODE_NUM_KEYS_OFFSET + INTERNAL_NODE_NUM_KEYS_SIZE;
-const uint32_t INTERNAL_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE +
-        INTERNAL_NODE_NUM_KEYS_SIZE + INTERNAL_NODE_RIGHT_CHILD_SIZE;
+// 得到node的类型，是root还是其他类型
+NodeType get_node_type(void* node) {
+    uint8_t value = *((uint8_t*)(node + NODE_TYPE_OFFSET));
+    return (NodeType)value;// 类型转换
+}
 
-/*
-+ * Internal Node Body Layout
-+ */
-const uint32_t INTERNAL_NODE_KEY_SIZE = sizeof(uint32_t);
-const uint32_t INTERNAL_NODE_CHILD_SIZE = sizeof(uint32_t);
-const uint32_t INTERNAL_NODE_CELL_SIZE =
-        INTERNAL_NODE_CHILD_SIZE + INTERNAL_NODE_KEY_SIZE;
+
+
+// 寻找下一个节点所在的位置
+uint32_t* leaf_node_next_leaf(void* node) {
+    return node + LEAF_NODE_NEXT_LEAF_OFFSET;
+}
 
 // reading and write to an internal node
 // 得到的是关于num_keys内容的指针
@@ -170,7 +196,7 @@ uint32_t* internal_node_child(void* node, uint32_t child_num) {
 }
 
 uint32_t* internal_node_key(void* node, uint32_t key_num) {
-    return internal_node_cell(node, key_num) + INTERNAL_NODE_CHILD_SIZE;
+    return (void*)internal_node_cell(node, key_num) + INTERNAL_NODE_CHILD_SIZE;
 }
 
 // 新建初始化
@@ -205,9 +231,6 @@ void close_input_buffer(InputBuffer* input_Buffer) {
     free(input_Buffer);
 }
 
-void print_row(Row* row) {
-    printf("(%d, %s, %s)\n", row->id, row->username, row->email);
-}
 
 //公共头部偏移量之后的东西，就是数量，返回数量指针
 uint32_t* leaf_node_num_cells(void* node) {
@@ -224,12 +247,6 @@ uint32_t* leaf_node_key(void* node, uint32_t cell_num) {
 
 void* leaf_node_value(void* node, uint32_t cell_num) {
     return leaf_node_cell(node, cell_num) + LEAF_NODE_KEY_SIZE;
-}
-
-// 得到node的类型，是root还是其他类型
-NodeType get_node_type(void* node) {
-    uint8_t value = *((uint8_t*)(node + NODE_TYPE_OFFSET));
-    return (NodeType)value;// 类型转换
 }
 
 void set_node_type(void* node, NodeType type) {
@@ -259,6 +276,7 @@ void initialize_leaf_node(void* node) {
     set_node_type(node, NODE_LEAF);
     set_node_root(node, false);
     *leaf_node_num_cells(node) = 0;
+    *leaf_node_next_leaf(node) = 0;  // 0 represents no sibling
 }
 
 // 在pager中新建一个node(page)，给node开辟空间，之后刷新到磁盘中
@@ -298,20 +316,6 @@ void* get_page(Pager* pager, uint32_t page_num) {
     return pager->pages[page_num];
 }
 
-
-Cursor* table_start(Table* table) {
-    Cursor* cursor = malloc(sizeof(Cursor));
-    cursor->table = table;
-    cursor->page_num = table->root_page_num;
-    cursor->cell_num = 0;
-
-    void* root_node = get_page(table->pager, table->root_page_num);
-    uint32_t num_cells = *leaf_node_num_cells(root_node);
-    cursor->end_of_table = (num_cells == 0);
-
-    return cursor;
-}
-
 // 使用二分法进行查找
 Cursor* leaf_node_find(Table* table, uint32_t page_num, uint32_t key) {
     void* node = get_page(table->pager, page_num);
@@ -320,6 +324,7 @@ Cursor* leaf_node_find(Table* table, uint32_t page_num, uint32_t key) {
     Cursor* cursor = malloc(sizeof(Cursor));
     cursor->table = table;
     cursor->page_num = page_num;
+    cursor->end_of_table = false;
 
     // Binary search
     uint32_t min_index = 0;
@@ -331,33 +336,82 @@ Cursor* leaf_node_find(Table* table, uint32_t page_num, uint32_t key) {
             cursor->cell_num = index;
             return cursor;
         }
-        else if (key < key_at_index) {
+        if (key < key_at_index) {
             one_past_max_index = index;
-        }
-        else {
+        } else {
             min_index = index + 1;
         }
     }
+
     cursor->cell_num = min_index;
     return cursor;
+}
+// 内部节点寻找key
+uint32_t internal_node_find_child(void* node, uint32_t key) {
+    /*
+      Return the index of the child which should contain
+      the given key.
+    */
+    uint32_t num_keys = *internal_node_num_keys(node);
+
+    /*binary search*/
+    uint32_t min_index = 0;
+    uint32_t max_index = num_keys; // there is one more child than key
+
+    while (min_index != max_index) {
+        uint32_t index = (min_index + max_index) / 2;
+        uint32_t key_to_right = *internal_node_key(node, index);
+        if (key_to_right >= key) { //比最大值要小
+            max_index = index;
+        } else {
+            min_index = index + 1;
+        }
+    }
+    return min_index;
+}
+Cursor* internal_node_find(Table* table, uint32_t page_num, uint32_t key) {
+    void* node = get_page(table->pager, page_num);
+    // 找到了在哪一page中有key
+    uint32_t child_index = internal_node_find_child(node, key);
+    uint32_t child_num = *internal_node_child(node, child_index);
+    void* child = get_page(table->pager, child_num);
+    switch (get_node_type(child)) {
+        case NODE_LEAF:
+            return leaf_node_find(table, child_num, key);
+        case NODE_INTERNAL:
+            return internal_node_find(table, child_num, key);
+    }
 }
 
 /*
  Return the position of the given key.
  If the key is not present, return the position
  where it should be inserted
+ 从根节点开始寻找节点
 */
 Cursor* table_find(Table* table, uint32_t key) {
     uint32_t root_page_num = table->root_page_num;
     void* root_node = get_page(table->pager, root_page_num);
-
+    // 得到当前table指向的page
     if (get_node_type(root_node) == NODE_LEAF) {
+        // 如果是叶节点，直接二分法开始在内部寻找节点
         return leaf_node_find(table, root_page_num, key);
     }
     else {
-        printf("Need to implement searching an internal node\n");
-        exit(EXIT_FAILURE);
+        // 如果是内部节点，则需要从内部节点再去寻找
+        return internal_node_find(table, root_page_num, key);
     }
+}
+// 并添加一个搜索键 0（最小可能键）的新实现。 即使 key 0 在表中不存在，
+// 该方法也会返回最低 id 的位置（最左边叶节点的开始）。
+Cursor* table_start(Table* table) {
+    Cursor* cursor =  table_find(table, 0);
+
+    void* node = get_page(table->pager, cursor->page_num);
+    uint32_t num_cells = *leaf_node_num_cells(node);
+    cursor->end_of_table = (num_cells == 0);
+
+    return cursor;
 }
 
 // 从file中将page打开，恢复出来。
@@ -436,9 +490,11 @@ Table* db_open(const char* filename) {
 // memcpy 从存储区 str2 复制 n 个字节到存储区 str1
 void serialize_row(Row* source, void* destination) {
     memcpy(destination + ID_OFFSET, &(source->id), ID_SIZE);
-
+    /*
     strncpy(destination + USERNAME_OFFSET, source->username, USERNAME_SIZE);
-    strncpy(destination + EMAIL_OFFSET, source->email, EMAIL_SIZE);
+    strncpy(destination + EMAIL_OFFSET, source->email, EMAIL_SIZE);*/
+    memcpy(destination + USERNAME_OFFSET, &(source->username), USERNAME_SIZE);
+    memcpy(destination + EMAIL_OFFSET, &(source->email), EMAIL_SIZE);
 }
 
 // 从destination复制文件进入source返回过去
@@ -467,6 +523,15 @@ uint32_t get_unused_page_num(Pager* pager) {
     return pager->num_pages;
 }
 
+uint32_t* node_parent(void* node) { return node + PARENT_POINTER_OFFSET; }
+
+// 现在我们需要在父节点中找到受影响的单元格。 孩子不知道自己的页码，所以我们无法寻找。
+// 但它确实知道自己的最大密钥，因此我们可以在父级中搜索该密钥。
+void update_internal_node_key(void* node, uint32_t old_key, uint32_t new_key) {
+    uint32_t old_child_index = internal_node_find_child(node, old_key);
+    *internal_node_key(node, old_child_index) = new_key;
+}
+
 void create_new_root(Table* table, uint32_t right_child_page_num) {
     /* 前提是右孩子已经处理完毕
      * Handle splitting the root.
@@ -476,7 +541,7 @@ void create_new_root(Table* table, uint32_t right_child_page_num) {
      * New root node points to two children.*/
     void* root = get_page(table->pager, table->root_page_num);
     void* right_child = get_page(table->pager, right_child_page_num);
-    uint32_t left_child_page_num = get_unused_page_num(table->pager);// new page
+    uint32_t left_child_page_num = get_unused_page_num(table->pager);// new page,从最后开始计算
     void* left_child = get_page(table->pager, left_child_page_num);
     // the old root is copied to the left child so we can reuse the root page:
     /* Left child has data copied from old root */
@@ -490,6 +555,45 @@ void create_new_root(Table* table, uint32_t right_child_page_num) {
     uint32_t left_child_max_key = get_node_max_key(left_child);
     *internal_node_key(root, 0) = left_child_max_key;
     *internal_node_right_child(root) = right_child_page_num;
+    // 左右孩子的父指针需要初始化
+    *node_parent(left_child) = table->root_page_num;
+    *node_parent(right_child) = table->root_page_num;
+}
+
+void internal_node_insert(Table* table, uint32_t parent_page_num, uint32_t child_page_num) {
+    /*
+     * Add a new child/key pair to parent that corresponds to child*/
+    void* parent = get_page(table->pager, parent_page_num);
+    void* child = get_page(table->pager, child_page_num);
+    uint32_t child_max_key = get_node_max_key(child);
+    uint32_t index = internal_node_find_child(parent, child_max_key);
+
+    uint32_t original_num_keys = *internal_node_num_keys(parent);
+    *internal_node_num_keys(parent) = original_num_keys + 1;
+
+    if (original_num_keys >= INTERNAL_NODE_MAX_CELLS) {
+        printf("Need to implement splitting internal node\n");
+        exit(EXIT_FAILURE);
+    }
+    uint32_t right_child_page_num = *internal_node_right_child(parent);
+    void* right_child = get_page(table->pager, right_child_page_num);
+
+    if (child_max_key > get_node_max_key(right_child)) {
+        /* Replace right child */
+        *internal_node_child(parent, original_num_keys) = right_child_page_num;
+        *internal_node_key(parent, original_num_keys) =
+                get_node_max_key(right_child);
+        *internal_node_right_child(parent) = child_page_num;
+    } else {
+        /* Make room for the new cell */
+        for (uint32_t i = original_num_keys; i > index; i--) {
+            void* destination = internal_node_cell(parent, i);
+            void* source = internal_node_cell(parent, i - 1);
+            memcpy(destination, source, INTERNAL_NODE_CELL_SIZE);
+        }
+        *internal_node_child(parent, index) = child_page_num;
+        *internal_node_key(parent, index) = child_max_key;
+    }
 }
 
 // 节点的分裂与插入
@@ -500,15 +604,19 @@ void leaf_node_split_and_insert(Cursor* cursor, uint32_t key, Row* value) {
      * Update parent or create a new parent.
      * */
     void* old_node = get_page(cursor->table->pager, cursor->page_num);
+    uint32_t old_max = get_node_max_key(old_node);// 获取最大值
     uint32_t new_page_num = get_unused_page_num(cursor->table->pager); // new page
     void* new_node = get_page(cursor->table->pager, new_page_num);
     initialize_leaf_node(new_node);
+    *node_parent(new_node) = *node_parent(old_node);
+    *leaf_node_next_leaf(new_node) = *leaf_node_next_leaf(old_node);
+    *leaf_node_next_leaf(old_node) = new_page_num; // old节点保持在new_page_num位置当中
     /*
      * All existing keys plus new key should be divided
      * evenly between old (left) and new (right) nodes.
      * Starting from the right, move each key to correct position.
      */
-    for (uint32_t i = LEAF_NODE_MAX_CELLS; i >= 0; --i) {
+    for (uint32_t i = LEAF_NODE_MAX_CELLS; i >= 0; i--) {
         void* destination_node;
         // 确定节点的在左孩子还是右孩子
         if (i >= LEAF_NODE_LEFT_SPLIT_COUNT) { //大于左边计数
@@ -520,7 +628,10 @@ void leaf_node_split_and_insert(Cursor* cursor, uint32_t key, Row* value) {
         uint32_t index_within_node = i % LEAF_NODE_LEFT_SPLIT_COUNT;
         void* destination = leaf_node_cell(destination_node, index_within_node);
         if (i == cursor->cell_num) { // 分离的目标节点
-            serialize_row(value, destination);
+            //serialize_row(value, destination);
+            serialize_row(value,
+                          leaf_node_value(destination_node, index_within_node));
+            *leaf_node_key(destination_node, index_within_node) = key;
         }
         else if (i > cursor->cell_num) {// 因为已经分离出去，所以大于的要缩进
             memcpy(destination, leaf_node_cell(old_node, i - 1), LEAF_NODE_CELL_SIZE);
@@ -537,8 +648,13 @@ void leaf_node_split_and_insert(Cursor* cursor, uint32_t key, Row* value) {
         return create_new_root(cursor->table, new_page_num);
     }
     else {
-        printf("Need to implement update parent after split\n");
-        exit(EXIT_FAILURE);
+        uint32_t parent_page_num = *node_parent(old_node);
+        uint32_t new_max = get_node_max_key(old_node);
+        void* parent = get_page(cursor->table->pager, parent_page_num);
+
+        update_internal_node_key(parent, old_max, new_max);
+        internal_node_insert(cursor->table, parent_page_num, new_page_num);
+        return;
     }
 }
 
@@ -547,7 +663,7 @@ void leaf_node_insert(Cursor* cursor, uint32_t key, Row* value) {
     void* node = get_page(cursor->table->pager, cursor->page_num);
     uint32_t num_cells = *leaf_node_num_cells(node);
     if (num_cells >= LEAF_NODE_MAX_CELLS) {
-        // Node full 未实现Btree节点分开
+        // Node full 实现Btree节点分开
         leaf_node_split_and_insert(cursor, key, value);
         return;
     }
@@ -556,6 +672,7 @@ void leaf_node_insert(Cursor* cursor, uint32_t key, Row* value) {
         // Make room for new cell
         // 从后向前复制
         for (uint32_t i = num_cells; i > cursor->cell_num; i--) {
+            // memcpy (str1, str2, size)，将str2的size字节复制到str1，向后移动一位
             memcpy(leaf_node_cell(node, i), leaf_node_cell(node, i - 1),
                    LEAF_NODE_CELL_SIZE);
         }
@@ -564,13 +681,15 @@ void leaf_node_insert(Cursor* cursor, uint32_t key, Row* value) {
     *(leaf_node_num_cells(node)) += 1;
     *(leaf_node_key(node, cursor->cell_num)) = key;
     serialize_row(value, leaf_node_value(node, cursor->cell_num));
-    }
+}
 
 //将Cache刷新进入磁盘中，关闭数据库 file，然后释放内存
 void db_close(Table* table) {
     Pager* pager = table->pager; // 全部page表格
 
     for (uint32_t i = 0; i < pager->num_pages; ++i) {
+        // 若为空，直接进行下一次循环，
+        // 若不为空，代表内容需要存储进入磁盘中，需要刷新进入磁盘中
         if (pager->pages[i] == NULL) {
             continue;
         }
@@ -578,12 +697,13 @@ void db_close(Table* table) {
         free(pager->pages[i]);
         pager->pages[i] = NULL;
     }
-
+    // 关闭错误
     int result = close(pager->file_descripter);
     if (result == -1) {
         printf("Error closing db file.\n");
         exit(EXIT_FAILURE);
     }
+    // 释放所有的内存
     for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
         void* page = pager->pages[i];
         if (page) {
@@ -614,12 +734,13 @@ void indent(uint32_t level) {
 void print_tree(Pager* pager, uint32_t page_num, uint32_t indentation_level) {
     void* node = get_page(pager, page_num);
     uint32_t num_keys, child;
+
     switch (get_node_type(node)) {
         case (NODE_LEAF):
             num_keys = *leaf_node_num_cells(node);
             indent(indentation_level);
             printf("- leaf (size %d)\n", num_keys);
-            for (uint32_t i = 0; i < num_keys; ++i) {
+            for (uint32_t i = 0; i < num_keys; i++) {
                 indent(indentation_level + 1);
                 printf("- %d\n", *leaf_node_key(node, i));
             }
@@ -627,8 +748,8 @@ void print_tree(Pager* pager, uint32_t page_num, uint32_t indentation_level) {
         case (NODE_INTERNAL):
             num_keys = *internal_node_num_keys(node);
             indent(indentation_level);
-            printf("-  internal (size %d)\n", num_keys);
-            for (uint32_t i = 0; i < num_keys; ++i) {
+            printf("- internal (size %d)\n", num_keys);
+            for (uint32_t i = 0; i < num_keys; i++) {
                 child = *internal_node_child(node, i);
                 print_tree(pager, child, indentation_level + 1);
 
@@ -637,6 +758,7 @@ void print_tree(Pager* pager, uint32_t page_num, uint32_t indentation_level) {
             }
             child = *internal_node_right_child(node);
             print_tree(pager, child, indentation_level + 1);
+            break;
     }
 }
 
@@ -719,33 +841,49 @@ void* cursor_value(Cursor* cursor) {
 }
 
 // cursor 移动
+// 现在，每当我们想要将游标前进到叶节点的末尾时，我们都可以检查叶节点是否有兄弟节点。
+// 如果是这样，请跳转到它。 否则，我们就在桌子的最后。
 void cursor_advance(Cursor* cursor) {
     uint32_t page_num = cursor->page_num;
     void* node = get_page(cursor->table->pager, page_num);
 
     cursor->cell_num += 1;
     if (cursor->cell_num >= (*leaf_node_num_cells(node))) {
-        cursor->end_of_table = true;
+        /* Advance to next leaf node*/
+        uint32_t next_page_num = *leaf_node_next_leaf(node);
+        if (next_page_num == 0) {
+            /* This was rightmost leaf*/
+            cursor->end_of_table = true;
+        }
+        else {
+            cursor->page_num = next_page_num;
+            cursor->cell_num = 0;
+        }
     }
 }
 
-// 执行插入
+// 执行插入，任务的作用点是在leaf node上！！！
 ExecuteResult execute_insert(Statement* statement, Table* table) {
-    void* node = get_page(table->pager, table->root_page_num);
-    uint32_t num_cells = (*leaf_node_num_cells(node));
-    // 之前存在节点满直接打印错误。
-    Row* row_to_insert = &(statement->row_to_insert);
+    Row* row_to_insert = &(statement->row_to_insert); // id user_name email
     // Cursor* cursor = table_end(table); 不再需要插入到最后一页
     // table 是表，现有位置，然后根据table存储的num_rows计算应该插入到那一页
-    uint32_t key_to_insert = row_to_insert->id;
+    uint32_t key_to_insert = row_to_insert->id; // 根据ID确定插入的位置
     Cursor* cursor = table_find(table, key_to_insert);
+
+    void* node = get_page(table->pager, cursor->page_num);
+    // 返回本节点的page位置，转换为node指针。
+    uint32_t num_cells = *leaf_node_num_cells(node); // 本节点内，cell数目
+
     if (cursor->cell_num < num_cells) {
         uint32_t key_at_index = *leaf_node_key(node, cursor->cell_num);
         if (key_at_index == key_to_insert) {
             return EXECUTE_DUPLICATE_KEY;
         }
     }
+
     leaf_node_insert(cursor, row_to_insert->id, row_to_insert);
+    free(cursor);
+
     return EXECUTE_SUCCESS;
 }
 
@@ -778,13 +916,14 @@ ExecuteResult execute_statement(Statement* statement, Table* table) {
 }
 
 int main(int argc, char* argv[]) {
+    /*
     if (argc < 2) {
         printf("Must supply a database filename.\n");
         exit(EXIT_FAILURE);
     }
 
-    char* filename = argv[1];
-    //char* filename = "mydb.db";debug
+    char* filename = argv[1];*/
+    char* filename = "mydb.db"; //debug
     Table* table = db_open(filename);
 
     InputBuffer* input_buffer = new_input_buffer();
