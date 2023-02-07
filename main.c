@@ -916,14 +916,14 @@ ExecuteResult execute_statement(Statement* statement, Table* table) {
 }
 
 int main(int argc, char* argv[]) {
-    /*
+
     if (argc < 2) {
         printf("Must supply a database filename.\n");
         exit(EXIT_FAILURE);
     }
 
-    char* filename = argv[1];*/
-    char* filename = "mydb.db"; //debug
+    char* filename = argv[1];
+    // char* filename = "mydb.db"; //debug
     Table* table = db_open(filename);
 
     InputBuffer* input_buffer = new_input_buffer();
